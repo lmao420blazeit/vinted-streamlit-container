@@ -4,12 +4,13 @@ FROM python:3.10.6-slim
 
 WORKDIR /vinted_streamlit
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    software-properties-common \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+COPY . /vinted_streamlit
+
+# Install dependencies
+RUN apt-get update \
+    && apt-get -y install libpq-dev gcc \
+    && pip install psycopg2 \
+    && pip install --no-cache-dir -r requirements.txt 
 
 RUN git clone https://github.com/streamlit/streamlit-example.git .
 
