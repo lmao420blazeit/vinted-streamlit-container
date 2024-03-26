@@ -20,7 +20,7 @@ def load_credentials(path = "aws_rds_credentials.json"):
 
 # Load a sample dataset
 def load_data():
-    engine = create_engine(f"postgresql://{os.environ['user']}:{os.environ['password']}@{os.environ['host']}:{os.environ['port']}/{os.environ['database']}?sslmode=require")
+    engine = create_engine("postgresql://postgres:9121759591mM!@vinted.cl2cus64cwps.eu-north-1.rds.amazonaws.com:5432/postgres?sslmode=require")
     sql_query = "SELECT * FROM public.products_catalog ORDER BY date DESC LIMIT 5000"
     df = pd.read_sql(sql_query, engine)
     return (df)
@@ -51,7 +51,7 @@ def main():
         """,
         unsafe_allow_html= True)
 
-    st.write("<h2 style='font-family: Bungee;'>Vinted Dashboard</h2>", 
+    st.write("<h2 style='font-family: Bungee; color: orange''>Vinted Dashboard</h2>", 
              unsafe_allow_html=True)
     latest_date = st.session_state.products_catalog["date"].max()
     st.write(f"Latest updated on {latest_date}", 

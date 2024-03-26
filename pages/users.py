@@ -1,15 +1,10 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
-import plotly.express as px
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import os
 import json
-
-def calculate_quantiles(data):
-    return np.percentile(data, [25, 50, 75])
-
+import plotly.express as px
 
 def load_credentials(path = "aws_rds_credentials.json"):
      with open(path, 'r') as file:
@@ -24,7 +19,7 @@ def load_credentials(path = "aws_rds_credentials.json"):
 
 load_credentials()
 
-aws_rds_url = f"postgresql://{os.environ['user']}:{os.environ['password']}@{os.environ['host']}:{os.environ['port']}/{os.environ['database']}?sslmode=require"
+aws_rds_url = "postgresql://postgres:9121759591mM!@vinted.cl2cus64cwps.eu-north-1.rds.amazonaws.com:5432/postgres?sslmode=require"
 
 # Load a sample dataset
 def load_data():
@@ -45,7 +40,7 @@ def main():
         """,
         unsafe_allow_html= True)
     
-    st.write("<h2 style='font-family: Bungee;'>Users</h2>", 
+    st.write("<h2 style='font-family: Bungee; color: orange'>Users</h2>", 
              unsafe_allow_html=True)
 
     st.session_state.users = load_data()
@@ -80,11 +75,12 @@ def main():
         with col5:
             st.metric(label="**Feedback reputation**", 
                     value="{:,.2f} ⭐".format(st.session_state.users['feedback_reputation'].median()*5),
-                    help="Median price of the articles in the sample in Euro")
+                    help="Feedback reputation")
 
     data = st.session_state.users.groupby("country_title")["item_count"].sum().reset_index()
 
     # Mapping ISO format codes to country names
+    # Move this into a lib dependency
     iso_mapping = {
         'BEL': ['Belgien', 'Belgio', 'Belgique', 'Belgium', 'België', 'Bélgica'],
         'ESP': ['Espagne', 'Espanha', 'España'],
@@ -97,13 +93,9 @@ def main():
 
     # Reverse mapping from country names to ISO format codes
     reverse_mapping = {value: key for key, values in iso_mapping.items() for value in values}
-
-    # Group by ISO format codes and sum item counts
     data['iso_code'] = data['country_title'].map(reverse_mapping)
     data = data.groupby('iso_code')['item_count'].sum().reset_index()
 
-    import plotly.express as px
-    # Create the choropleth map
     fig = go.Figure(
             data=go.Choropleth(
                 locations=data["iso_code"],  # Country names
@@ -185,7 +177,7 @@ def main():
         )
 
 
-    st.write("<h6 style='font-family: Bungee;'>Distribution</h6>", 
+    st.write("<h6 style='font-family: Bungee; color: orange'>Distribution</h6>", 
              unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
@@ -215,7 +207,7 @@ def main():
     with col2:
         st.plotly_chart(fig2)
 
-    st.write("<h6 style='font-family: Bungee;'>Profiles</h6>", 
+    st.write("<h6 style='font-family: Bungee; color: orange'>Profiles</h6>", 
              unsafe_allow_html=True)
 
     dataframe_data = st.session_state.users[["user_id", "city", "country_title", "profile_url", "feedback_count", "feedback_reputation", "given_item_count", "taken_item_count", "item_count"]]

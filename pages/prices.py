@@ -20,7 +20,7 @@ def load_credentials(path = "aws_rds_credentials.json"):
 
 load_credentials()
 
-aws_rds_url = f"postgresql://{os.environ['user']}:{os.environ['password']}@{os.environ['host']}:{os.environ['port']}/{os.environ['database']}?sslmode=require"
+aws_rds_url = "postgresql://postgres:9121759591mM!@vinted.cl2cus64cwps.eu-north-1.rds.amazonaws.com:5432/postgres?sslmode=require"
 
 import subprocess
 from wordcloud import WordCloud, STOPWORDS
@@ -104,7 +104,7 @@ def main():
 
     st.session_state.labels = load_labels()
 
-    st.write("<h2 style='font-family: Bungee;'>Prices</h2>", 
+    st.write("<h2 style='font-family: Bungee; color: orange'>Prices</h2>", 
              unsafe_allow_html=True)
 
     col1, col2 = st.columns([0.5, 0.5])
@@ -149,7 +149,7 @@ def main():
                     help="Median price (€) in the sample")
         with col5:
             st.metric(label="**Total Volume**", 
-                    value=st.session_state.products_catalog['price'].sum(),
+                    value="{:,.2f} €".format(st.session_state.products_catalog['price'].sum()),
                     help="Total volume (€) in the sample")
 
     cols = st.columns([0.4, 0.4])
@@ -176,7 +176,7 @@ def main():
                        facet_col="status",
                        category_orders={"status":["Satisfatório", "Bom", "Muito bom", "Novo sem etiquetas", "Novo com etiquetas"]})
 
-    st.write("<h6 style='font-family: Bungee;'>Price per status</h6>", 
+    st.write("<h6 style='font-family: Bungee; color: orange'>Price per status</h6>", 
              unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=True)  
 
