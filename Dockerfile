@@ -11,11 +11,7 @@ RUN apt-get update \
     && apt-get -y install libpq-dev gcc \
     && pip install psycopg2 \
     && pip install --no-cache-dir -r requirements.txt 
-
-RUN git clone https://github.com/streamlit/streamlit-example.git .
-
-RUN pip3 install -r requirements.txt
-
+    
 EXPOSE 8501
 
 # check if app is running
