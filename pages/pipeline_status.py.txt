@@ -1,0 +1,56 @@
+import streamlit as st
+import pandas as pd
+from sqlalchemy import create_engine
+import plotly.express as px
+import seaborn as sns
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import os
+import json
+import streamlit_shadcn_ui as ui
+
+def load_credentials(path = "aws_rds_credentials.json"):
+     with open(path, 'r') as file:
+          config = json.load(file)
+
+     # set up credentials
+     for key in config.keys():
+          os.environ[key] = config[key]
+
+     return
+
+# Load a sample dataset
+def load_data():
+    engine = create_engine(f"postgresql://{os.environ['user']}:{os.environ['password']}@{os.environ['host']}:{os.environ['port']}/{os.environ['database']}?sslmode=require")
+    sql_query = """
+                SELECT 
+                    COUNT(DISTINCT(user_id)) as count_users,
+                    COUNT(DISTINCT(catalog_id)) as count_catalogs,
+                    COUNT(DISTINCT(product_id)) as count_products,
+                    AVG(price) as avg_price,
+                    SUM(price) as sum_price,
+                    STDDEV(price) as std_price,
+                    date
+                FROM public.products_catalog
+                WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY date
+                """
+    df = pd.read_sql(sql_query, engine)
+    return (df)
+
+
+# Main function
+def main():
+    st.cache_data.clear()
+    try:
+        del st.session_state['products_catalog']
+    except:
+        pass
+    st.set_page_config(layout="wide")
+
+    load_credentials()
+    df = load_data()
+
+    st.write(df)
+
+main()

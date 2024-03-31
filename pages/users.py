@@ -5,6 +5,8 @@ import plotly.graph_objects as go
 import os
 import json
 import plotly.express as px
+import numpy as np
+import altair as alt
 
 def load_credentials(path = "aws_rds_credentials.json"):
      with open(path, 'r') as file:
@@ -19,12 +21,20 @@ def load_credentials(path = "aws_rds_credentials.json"):
 
 load_credentials()
 
-aws_rds_url = "postgresql://postgres:9121759591mM!@vinted.cl2cus64cwps.eu-north-1.rds.amazonaws.com:5432/postgres?sslmode=require"
+aws_rds_url = f"postgresql://{os.environ['user']}:{os.environ['password']}@{os.environ['host']}:{os.environ['port']}/{os.environ['database']}?sslmode=require"
 
 # Load a sample dataset
 def load_data():
     engine = create_engine(aws_rds_url)
-    sql_query = f"SELECT * FROM public.users_staging LIMIT 20000"
+    sql_query = f"""SELECT * 
+                    FROM public.users_staging 
+                    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+                        AND (user_id, date) IN (
+                            SELECT user_id, MAX(date)
+                            FROM public.users_staging
+                            WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+                            GROUP BY user_id
+                        )"""
     df = pd.read_sql(sql_query, engine)
     return (df)
 
@@ -46,7 +56,7 @@ def main():
     st.session_state.users = load_data()
 
     latest_date = st.session_state.users["date"].max()
-    st.write(f"Latest updated on {latest_date}", 
+    st.write(f"Latest updated on {latest_date} \n (last 30 days)", 
              unsafe_allow_html=True)
 
     # wrapping up with containers
@@ -55,27 +65,80 @@ def main():
         with col6:
             st.metric(label="**Active users**", 
                     value="{}".format(st.session_state.users['user_id'].nunique()),
-                    help="Number of unique users in the sample")            
+                    help="Average number of unique users in the sample")            
         with col1:
             st.metric(label="**Item count**", 
-                    value="{:,.2f}".format(st.session_state.users['item_count'].mean()),
-                    help="Number of unique brands in the sample")
+                    value="{:,.0f}".format(st.session_state.users['item_count'].mean()),
+                    help="Average number of unique brands in the sample")
         with col2:
             st.metric(label="**Positive feedback**", 
-                    value="{:,.2f} 	👍".format(st.session_state.users['positive_feedback_count'].mean()),
+                    value="{:,.0f} 	👍".format(st.session_state.users['positive_feedback_count'].mean()),
                     help="Average number of positive feedback per user")
         with col3:
             st.metric(label="**Negative feedback**", 
-                    value="{:,.2f} 👎".format(st.session_state.users['negative_feedback_count'].mean()),
+                    value="{:,.0f} 👎".format(st.session_state.users['negative_feedback_count'].mean()),
                     help="Average number of negative feedback per user")
         with col4:
             st.metric(label="**Total feedback**", 
-                    value="{:,.2f}".format(st.session_state.users['feedback_count'].mean()),
+                    value="{:,.0f}".format(st.session_state.users['feedback_count'].mean()),
                     help="Average of total feedback per user")
         with col5:
             st.metric(label="**Feedback reputation**", 
                     value="{:,.2f} ⭐".format(st.session_state.users['feedback_reputation'].median()*5),
                     help="Feedback reputation")
+
+    #######################
+    # CSS styling
+    st.markdown("""
+    <style>
+
+    [data-testid="block-container"] {
+        padding-left: 2rem;
+        padding-right: 2rem;
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+        margin-bottom: -7rem;
+    }
+
+    [data-testid="stVerticalBlock"] {
+        padding-left: 0rem;
+        padding-right: 0rem;
+    }
+
+    [data-testid="stMetric"] {
+        background-color: #393939;
+        text-align: center;
+        padding: 15px 0;
+        border-radius: 10px;
+    }
+
+    [data-testid="stMetricLabel"] {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    }
+
+    [data-testid="stMetricDeltaIcon-Up"] {
+        position: relative;
+        left: 38%;
+        -webkit-transform: translateX(-50%);
+        -ms-transform: translateX(-50%);
+        transform: translateX(-50%);
+    }
+
+    [data-testid="stMetricDeltaIcon-Down"] {
+        position: relative;
+        left: 38%;
+        -webkit-transform: translateX(-50%);
+        -ms-transform: translateX(-50%);
+        transform: translateX(-50%);
+    }
+    .st-emotion-cache-q8sbsg {
+        font-family: Nunito, sans-serif;
+        font-size: 30px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     data = st.session_state.users.groupby("country_title")["item_count"].sum().reset_index()
 
@@ -104,12 +167,19 @@ def main():
                 colorbar_title='Item count',  # Title for the color bar
     ))
 
+    fig.update_layout(
+        template='plotly_dark',
+        plot_bgcolor='rgba(0, 0, 0, 0)',
+        paper_bgcolor='rgba(0, 0, 0, 0)',
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=350
+    )
+
     # Update layout
     fig.update_layout(
         title_text='Total items listed per country',
         geo=dict(
             showcoastlines=True,  # Show coastlines on the map
-            showlakes=True
         )
     )
     fig.update_geos(
@@ -151,25 +221,31 @@ def main():
                 "iso_code": "ISO-3"
                 ,
                 "feedback_count": st.column_config.NumberColumn(
-                    "Reviews (mean)",
-                    help="Number of reviews",
-                    format="%.2f"),
+                    "Reviews",
+                    help="Average number of reviews",
+                    format="%.0f"),
                 "feedback_reputation": st.column_config.NumberColumn(
-                    "Stars (mean)",
-                    help="Number of user stars",
+                    "Stars",
+                    help="Average number of user stars",
                     format="%.2f ⭐"),
-                "given_item_count": st.column_config.NumberColumn(
-                    "Items sold (mean)",
-                    help="Number of items sold to date",
-                    format="%.2f"),
-                "taken_item_count": st.column_config.NumberColumn(
-                    "Items bought (mean)",
-                    help="Number of items bought to date",
-                    format="%.2f"),
-                "item_count": st.column_config.NumberColumn(
-                    "Items listed (mean)",
-                    help="Number of items listed at present date",
-                    format="%.2f"),
+                "given_item_count": st.column_config.ProgressColumn(
+                    "Items sold",
+                    help="Average number of items sold to date",
+                    format="%.0f",
+                    max_value=max(data.given_item_count)),
+                "taken_item_count": st.column_config.ProgressColumn(
+                    "Items bought",
+                    format="%.0f",
+                    min_value=0,
+                    max_value=max(data.taken_item_count),
+                    ),
+                "item_count": st.column_config.ProgressColumn(
+                    "Items listed",
+                    format="%.0f",
+                    min_value=0,
+                    max_value=max(data.item_count),
+                    help="Average number of items listed at present date"
+                    ),
                 "user_id": "Users"
             },
             hide_index=True,
@@ -185,25 +261,67 @@ def main():
                         x="given_item_count", 
                         marginal="box", 
                         barmode="overlay",
-                        nbins=100
+                        nbins=75
                     )
+    
+    fig1.update_layout(
+        xaxis_title="# Sold items",
+        yaxis_title="Count",
+        title= "Sold items"
+    )
+    percentiles = np.percentile(st.session_state.users["given_item_count"], [25, 50, 75, 95])
+    for percentile in percentiles:
+        fig1.add_shape(
+            type="line",
+            x0=percentile,
+            x1=percentile,
+            y0=0,
+            y1=fig1.data[0].x.max(),  # Set y1 to the maximum count on the y-axis
+            line=dict(
+                color="red",
+                width=2,
+                dash="dashdot"
+            )
+        )
 
     # Create the second histogram
     fig2 = px.histogram(st.session_state.users, 
                         x="taken_item_count", 
                         marginal="box", 
                         barmode="overlay",
-                        nbins=100,
+                        nbins=75,
                     )
+    fig2.update_layout(
+        xaxis_title="# Bought items",
+        yaxis_title="Count",
+        title= "Bought items"
+    )
+    percentiles = np.percentile(st.session_state.users["taken_item_count"], [25, 50, 75, 95])
+    for percentile in percentiles:
+        fig2.add_shape(
+            type="line",
+            x0=percentile,
+            x1=percentile,
+            y0=0,
+            y1=fig2.data[0].x.max(),  # Set y1 to the maximum count on the y-axis
+            line=dict(
+                color="red",
+                width=1,
+                dash="dash"
+            )
+        )
 
     # Share y-axis between the plots
     fig1.update_yaxes(matches='y')
     fig2.update_yaxes(matches='y')
+    fig1.update_yaxes(matches='x')
+    fig2.update_yaxes(matches='x')
 
     # Display the plots in Streamlit
     col1, col2 = st.columns(2)
     with col1:
         st.plotly_chart(fig1)
+
     with col2:
         st.plotly_chart(fig2)
 

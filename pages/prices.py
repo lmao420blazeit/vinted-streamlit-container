@@ -20,9 +20,8 @@ def load_credentials(path = "aws_rds_credentials.json"):
 
 load_credentials()
 
-aws_rds_url = "postgresql://postgres:9121759591mM!@vinted.cl2cus64cwps.eu-north-1.rds.amazonaws.com:5432/postgres?sslmode=require"
+aws_rds_url = f"postgresql://{os.environ['user']}:{os.environ['password']}@{os.environ['host']}:{os.environ['port']}/{os.environ['database']}?sslmode=require"
 
-import subprocess
 from wordcloud import WordCloud, STOPWORDS
 import plotly.graph_objs as go
 
@@ -79,15 +78,25 @@ def plotly_wordcloud(text):
 
 def load_labels():
     engine = create_engine(aws_rds_url)
-    sql_query = f"SELECT DISTINCT catalog_id, brand_title FROM public.products_catalog GROUP BY brand_title, catalog_id HAVING COUNT(product_id) > 300"
+    sql_query = f"""SELECT DISTINCT catalog_id, brand_title 
+                    FROM public.products_catalog 
+                    WHERE date >= CURRENT_DATE - INTERVAL '90 days'
+                    GROUP BY brand_title, catalog_id 
+                    HAVING COUNT(*) > 100
+                    """
     df = pd.read_sql(sql_query, engine)
     return (df)   
 
 # Load a sample dataset
 def load_data(brand, catalog):
     engine = create_engine(aws_rds_url)
-    sql_query = f"SELECT * FROM public.products_catalog WHERE brand_title = '{brand}' and catalog_id = '{catalog}' ORDER BY date DESC"
+    sql_query = f"""SELECT * 
+                    FROM public.products_catalog 
+                    WHERE brand_title = '{brand}' AND catalog_id = '{catalog}'
+                    ORDER BY date DESC
+                    """
     df = pd.read_sql(sql_query, engine)
+    print(max(df.date))
     return (df)
 
 # Main function
@@ -120,17 +129,16 @@ def main():
             options = st.session_state.labels[st.session_state.labels["catalog_id"] == catalog]["brand_title"] #.unique()
         )
     # Load data
-    global products_catalog
-    if 'products_catalog' not in st.session_state:
-        st.session_state.products_catalog = load_data(brand = brand, catalog = catalog)
-        # remove outliers for viz purposes
-        q_high = st.session_state.products_catalog["price"].quantile(0.95)
-        q_low = st.session_state.products_catalog["price"].quantile(0.05)
-        st.session_state.products_catalog = st.session_state.products_catalog[(st.session_state.products_catalog["price"] < q_high) & 
-                                                                              (st.session_state.products_catalog["price"] > q_low)]
+    st.session_state.products_catalog = load_data(brand = brand, 
+                                                    catalog = catalog)
+    # remove outliers for viz purposes
+    q_high = st.session_state.products_catalog["price"].quantile(0.95)
+    q_low = st.session_state.products_catalog["price"].quantile(0.05)
+    st.session_state.products_catalog = st.session_state.products_catalog[(st.session_state.products_catalog["price"] < q_high) & 
+                                                                            (st.session_state.products_catalog["price"] > q_low)]
         
     with st.container():
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
         with col1:
             st.metric(label="**Sizes**", 
                     value=st.session_state.products_catalog['size_title'].nunique(),
@@ -145,22 +153,89 @@ def main():
                     help="Number of unique users in the sample")
         with col4:
             st.metric(label="**Median Price**", 
-                    value=st.session_state.products_catalog['price'].median(),
+                    value="{:.2f} €".format(st.session_state.products_catalog['price'].median()),
                     help="Median price (€) in the sample")
         with col5:
+            st.metric(label="**Standard Dev.**", 
+                    value="{:.2f} €".format(st.session_state.products_catalog['price'].std()),
+                    help="Std. Dev price (€) in the sample")
+        with col6:
             st.metric(label="**Total Volume**", 
-                    value="{:,.2f} €".format(st.session_state.products_catalog['price'].sum()),
+                    value="{:.2f} €".format(st.session_state.products_catalog['price'].sum()),
                     help="Total volume (€) in the sample")
 
-    cols = st.columns([0.4, 0.4])
+    #######################
+    # CSS styling
+    st.markdown("""
+    <style>
+
+    [data-testid="block-container"] {
+        padding-left: 2rem;
+        padding-right: 2rem;
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+        margin-bottom: -7rem;
+    }
+
+    [data-testid="stVerticalBlock"] {
+        padding-left: 0rem;
+        padding-right: 0rem;
+    }
+
+    [data-testid="stMetric"] {
+        background-color: #393939;
+        text-align: center;
+        padding: 15px 0;
+        border-radius: 10px;
+    }
+
+    [data-testid="stMetricLabel"] {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    }
+
+    [data-testid="stMetricDeltaIcon-Up"] {
+        position: relative;
+        left: 38%;
+        -webkit-transform: translateX(-50%);
+        -ms-transform: translateX(-50%);
+        transform: translateX(-50%);
+    }
+
+    [data-testid="stMetricDeltaIcon-Down"] {
+        position: relative;
+        left: 38%;
+        -webkit-transform: translateX(-50%);
+        -ms-transform: translateX(-50%);
+        transform: translateX(-50%);
+    }
+    .st-emotion-cache-q8sbsg {
+        font-family: Nunito, sans-serif;
+        font-size: 30px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    cols = st.columns([0.4, 0.4, 0.4])
+    data = st.session_state.products_catalog.groupby(["date"])["price"].agg(['median', 'count']).reset_index()
+    with cols[2]:
+        fig = px.bar(data, 
+                    x='date', 
+                    y='count')
+        st.plotly_chart(fig)  
     with cols[1]:
-        plt.subplots(figsize = (8,8))
-        wordcloud = WordCloud (
-            background_color = 'white',
-                ) \
-            .generate(' '.join(st.session_state.products_catalog["title"]))
-        plt.imshow(wordcloud, interpolation='bilinear')
-        st.pyplot(use_container_width= True)        
+        #plt.subplots(figsize = (8,8))
+        #wordcloud = WordCloud (
+        #    background_color = 'black',
+        #        ) \
+        #    .generate(' '.join(st.session_state.products_catalog["title"]))
+        #plt.imshow(wordcloud, interpolation='bilinear')
+        #st.pyplot(use_container_width= True)   
+        fig = px.bar(data, 
+                    x='date', 
+                    y='median')
+        st.plotly_chart(fig)  
 
     with cols[0]: 
         fig = px.pie(st.session_state.products_catalog[["status", "product_id"]], 

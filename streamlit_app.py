@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import os
 import json
+import streamlit_shadcn_ui as ui
 
 def load_credentials(path = "aws_rds_credentials.json"):
      with open(path, 'r') as file:
@@ -20,8 +21,12 @@ def load_credentials(path = "aws_rds_credentials.json"):
 
 # Load a sample dataset
 def load_data():
-    engine = create_engine("postgresql://postgres:9121759591mM!@vinted.cl2cus64cwps.eu-north-1.rds.amazonaws.com:5432/postgres?sslmode=require")
-    sql_query = "SELECT * FROM public.products_catalog ORDER BY date DESC LIMIT 5000"
+    engine = create_engine(f"postgresql://{os.environ['user']}:{os.environ['password']}@{os.environ['host']}:{os.environ['port']}/{os.environ['database']}?sslmode=require")
+    sql_query = """
+                SELECT *
+                FROM public.products_catalog
+                WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+                """
     df = pd.read_sql(sql_query, engine)
     return (df)
 
@@ -33,6 +38,8 @@ def main():
     except:
         pass
     st.set_page_config(layout="wide")
+
+    load_credentials()
 
     # Load data
     global products_catalog
@@ -66,6 +73,59 @@ def main():
         }
         </style>""", 
         unsafe_allow_html=True)
+    
+    #######################
+    # CSS styling
+    st.markdown("""
+    <style>
+
+    [data-testid="block-container"] {
+        padding-left: 2rem;
+        padding-right: 2rem;
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+        margin-bottom: -7rem;
+    }
+
+    [data-testid="stVerticalBlock"] {
+        padding-left: 0rem;
+        padding-right: 0rem;
+    }
+
+    [data-testid="stMetric"] {
+        background-color: #393939;
+        text-align: center;
+        padding: 15px 0;
+        border-radius: 10px;
+    }
+
+    [data-testid="stMetricLabel"] {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    }
+
+    [data-testid="stMetricDeltaIcon-Up"] {
+        position: relative;
+        left: 38%;
+        -webkit-transform: translateX(-50%);
+        -ms-transform: translateX(-50%);
+        transform: translateX(-50%);
+    }
+
+    [data-testid="stMetricDeltaIcon-Down"] {
+        position: relative;
+        left: 38%;
+        -webkit-transform: translateX(-50%);
+        -ms-transform: translateX(-50%);
+        transform: translateX(-50%);
+    }
+    .st-emotion-cache-q8sbsg {
+        font-family: Nunito, sans-serif;
+        font-size: 30px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     # wrapping up with containers
     with st.container():
@@ -92,23 +152,8 @@ def main():
                     help="Median price of the articles in the sample in Euro")
         with col6:
             st.metric(label="**Total Volume (€)**", 
-                    value="{:,.2f} €".format(st.session_state.products_catalog['price'].sum()),
+                    value="{:,.0f} €".format(st.session_state.products_catalog['price'].sum()),
                     help="Total volume of the articles in the sample in Euro")
-
-    # center metrics labels
-    st.markdown('''
-    <style>
-    /*center metric label*/
-    [data-testid="stMetricLabel"] > div:nth-child(1) {
-        justify-content: center;
-    }
-
-    /*center metric value*/
-    [data-testid="stMetricValue"] > div:nth-child(1) {
-        justify-content: center;
-    }
-    </style>
-    ''', unsafe_allow_html=True)
 
     # selecting only the top 15 brands (count items) for visualization purposes
     # avoiding cluttering
@@ -222,5 +267,35 @@ def main():
         with col2:
             st.plotly_chart(fig, use_container_width=True) 
 
+    with st.container():
+        st.write("<h5 style='font-family: Bungee; color: orange'>Datatable</h5>", unsafe_allow_html=True)
+        st.dataframe(
+            st.session_state.products_catalog[["product_id", "title", "price", "brand_title", "url", "promoted", "size_title", "status", "catalog_id", "view_count"]],
+            column_config={
+                "product_id": "Article ID",
+                "title": "Article title",
+                "price": st.column_config.NumberColumn(
+                    "Price",
+                    help="Price in EUR",
+                    format="%.2f €"
+                ),
+                "brand_title": "Brand",
+                "url": st.column_config.LinkColumn(
+                    "Link",
+                    help="Link to the item"
+                ),
+                "promoted": "Promoted",
+                "size_title": "Size",
+                "status": "Condition",
+                "catalog_id": "Catalog",
+                "view_count": st.column_config.NumberColumn(
+                    "Views",
+                    help="Number of views",
+                    format="%.0f"
+                )
+            },
+            hide_index=True,
+            use_container_width=True
+        )
 if __name__ == "__main__":
     main()
