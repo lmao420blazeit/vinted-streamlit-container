@@ -217,14 +217,15 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-    cols = st.columns([0.4, 0.4, 0.4])
+    cols = st.columns([0.25, 0.25, 0.25, 0.25])
     data = st.session_state.products_catalog.groupby(["date"])["price"].agg(['median', 'count']).reset_index()
-    with cols[2]:
+    with cols[3]:
         fig = px.bar(data, 
                     x='date', 
                     y='count')
-        st.plotly_chart(fig)  
-    with cols[1]:
+        fig.update_layout(title = "Number of articles per day")
+        st.plotly_chart(fig, use_container_width= True)  
+    with cols[2]:
         #plt.subplots(figsize = (8,8))
         #wordcloud = WordCloud (
         #    background_color = 'black',
@@ -235,14 +236,22 @@ def main():
         fig = px.bar(data, 
                     x='date', 
                     y='median')
-        st.plotly_chart(fig)  
+        fig.update_layout(title = "Median price of articles per day")
+        st.plotly_chart(fig, use_container_width= True)  
 
-    with cols[0]: 
+    with cols[1]: 
         fig = px.pie(st.session_state.products_catalog[["status", "product_id"]], 
                     values="product_id", 
                     names="status", 
                     title='Products by status')
-        st.plotly_chart(fig)
+        st.plotly_chart(fig, use_container_width= True)
+
+    with cols[0]: 
+        fig = px.pie(st.session_state.products_catalog[["size_title", "product_id"]], 
+                    values="product_id", 
+                    names="size_title", 
+                    title='Products by size')
+        st.plotly_chart(fig, use_container_width= True)
 
     fig = px.histogram(st.session_state.products_catalog, 
                        x="price", 
@@ -264,18 +273,95 @@ def main():
     cols = st.columns(5)
     for i, index in enumerate(["Satisfatório", "Bom", "Muito bom", "Novo sem etiquetas", "Novo com etiquetas"]):
         __ = st.session_state.products_catalog[st.session_state.products_catalog["status"] == index]
-        bootstrap_results = bootstrap((__["price"], ), 
-                                    statistic=calculate_quantiles,
-                                    method = "basic")
-        
+        try:
+            bootstrap_results = bootstrap((__["price"], ), 
+                                        statistic=calculate_quantiles,
+                                        method = "basic")
+            low = bootstrap_results.confidence_interval.low
+            high = bootstrap_results.confidence_interval.high
+        except:
+            low = 0
+            high = 0
+
         df_confidence_interval = pd.DataFrame({
-            'low': bootstrap_results.confidence_interval.low,
-            'high': bootstrap_results.confidence_interval.high
+            'low': low,
+            'high': high
         },
-        index =  ["Q25%", "Q50%", "Q75%"])
+        index =  ["Q1", "Q2", "Q3"])
+
         with cols[i]:
             st.write(index, __["price"].count())
-            st.table(df_confidence_interval)
+            st.dataframe(
+                df_confidence_interval,
+                column_config={
+                    "low": st.column_config.NumberColumn(
+                        "Lower CI",
+                        help="Lower CI",
+                        format="%.2f €",
+                    ),
+                    "high": st.column_config.NumberColumn(
+                        "Upper CI",
+                        help="Upper CI",
+                        format="%.2f €",
+                    )
+                },
+                hide_index=False,
+                use_container_width= True
+            )
+
+
+    fig = px.histogram(st.session_state.products_catalog[~st.session_state.products_catalog['size_title'].isin(["XXXL", "4XL"])], 
+                       x="price", 
+                       marginal="box", 
+                       barmode= "overlay", 
+                       facet_col="size_title",
+                       category_orders={"size_title":["XS", "S", "M", "L", "XL", "XXL"]})
+
+    st.write("<h6 style='font-family: Bungee; color: orange'>Price per size</h6>", 
+             unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True)  
+
+    cols = st.columns(6)
+    for i, index in enumerate(["XS", "S", "M", "L", "XL", "XXL"]):
+        __ = st.session_state.products_catalog[st.session_state.products_catalog["size_title"] == index]
+        try:
+            bootstrap_results = bootstrap((__["price"], ), 
+                                        statistic=calculate_quantiles,
+                                        method = "basic")
+            low = bootstrap_results.confidence_interval.low
+            high = bootstrap_results.confidence_interval.high
+        except:
+            low = 0
+            high = 0
+
+        df_confidence_interval = pd.DataFrame({
+            'low': low,
+            'high': high
+        },
+        index =  ["Q1", "Q2", "Q3"])
+
+        with cols[i]:
+            st.write(index, __["price"].count())
+            st.dataframe(
+                df_confidence_interval,
+                column_config={
+                    "low": st.column_config.NumberColumn(
+                        "Lower CI",
+                        help="Lower CI",
+                        format="%.2f €",
+                    ),
+                    "high": st.column_config.NumberColumn(
+                        "Upper CI",
+                        help="Upper CI",
+                        format="%.2f €",
+                    )
+                },
+                hide_index=False,
+                use_container_width= True
+            )
+
+    #pivot_df = st.session_state.products_catalog.pivot_table(index='status', columns='size_title', values='price', aggfunc='median')
+    #st.write(pivot_df)
 
 
 main()
