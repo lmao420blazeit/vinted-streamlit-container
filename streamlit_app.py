@@ -2,32 +2,20 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
 import plotly.express as px
-import seaborn as sns
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import os
-import json
-import streamlit_shadcn_ui as ui
+from utils import css_to_markdown, load_credentials
 
-def load_credentials(path = "aws_rds_credentials.json"):
-     with open(path, 'r') as file:
-          config = json.load(file)
-
-     # set up credentials
-     for key in config.keys():
-          os.environ[key] = config[key]
-
-     return
+sql_query = """
+            SELECT *
+            FROM public.products_catalog
+            WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+            """
 
 # Load a sample dataset
-def load_data():
+def load_data(query):
     engine = create_engine(f"postgresql://{os.environ['user']}:{os.environ['password']}@{os.environ['host']}:{os.environ['port']}/{os.environ['database']}?sslmode=require")
-    sql_query = """
-                SELECT *
-                FROM public.products_catalog
-                WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-                """
-    df = pd.read_sql(sql_query, engine)
+    df = pd.read_sql(query, engine)
     return (df)
 
 # Main function
@@ -44,7 +32,7 @@ def main():
     # Load data
     global products_catalog
     if 'products_catalog' not in st.session_state:
-        st.session_state.products_catalog = load_data()
+        st.session_state.products_catalog = load_data(sql_query)
         # remove outliers for viz purposes
         q_high = st.session_state.products_catalog["price"].quantile(0.95)
         q_low = st.session_state.products_catalog["price"].quantile(0.05)
@@ -63,69 +51,6 @@ def main():
     latest_date = st.session_state.products_catalog["date"].max()
     st.write(f"Latest updated on {latest_date}", 
              unsafe_allow_html=True)
-    st.write("""<style>
-        <style>
-        /* Define the keyframes for the animation */
-        @keyframes bubbly-text-animation {
-        0% { transform: scale(1); opacity: 0.5; }
-        50% { transform: scale(1.1); opacity: 1; }
-        100% { transform: scale(1); opacity: 0.5; }
-        }
-        </style>""", 
-        unsafe_allow_html=True)
-    
-    #######################
-    # CSS styling
-    st.markdown("""
-    <style>
-
-    [data-testid="block-container"] {
-        padding-left: 2rem;
-        padding-right: 2rem;
-        padding-top: 1rem;
-        padding-bottom: 0rem;
-        margin-bottom: -7rem;
-    }
-
-    [data-testid="stVerticalBlock"] {
-        padding-left: 0rem;
-        padding-right: 0rem;
-    }
-
-    [data-testid="stMetric"] {
-        background-color: #393939;
-        text-align: center;
-        padding: 15px 0;
-        border-radius: 10px;
-    }
-
-    [data-testid="stMetricLabel"] {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    }
-
-    [data-testid="stMetricDeltaIcon-Up"] {
-        position: relative;
-        left: 38%;
-        -webkit-transform: translateX(-50%);
-        -ms-transform: translateX(-50%);
-        transform: translateX(-50%);
-    }
-
-    [data-testid="stMetricDeltaIcon-Down"] {
-        position: relative;
-        left: 38%;
-        -webkit-transform: translateX(-50%);
-        -ms-transform: translateX(-50%);
-        transform: translateX(-50%);
-    }
-    .st-emotion-cache-q8sbsg {
-        font-family: Nunito, sans-serif;
-        font-size: 30px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
     # wrapping up with containers
     with st.container():
@@ -164,6 +89,8 @@ def main():
         median_price=('price', 'median'),
         count=('price', 'count')
     ).reset_index()
+
+    css_to_markdown("assets/st_app.css")
 
     fig = px.treemap(aggregated_data, 
                     path=['catalog_id', "brand_title"], 
