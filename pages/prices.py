@@ -96,7 +96,6 @@ def load_data(brand, catalog):
                     ORDER BY date DESC
                     """
     df = pd.read_sql(sql_query, engine)
-    print(max(df.date))
     return (df)
 
 # Main function

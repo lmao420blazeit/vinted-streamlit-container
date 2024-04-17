@@ -2,11 +2,11 @@ import pandas as pd
 from sqlalchemy import create_engine
 import os
 import json
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
-import seaborn as sns
+#import seaborn as sns
 import streamlit as st
 from sklearn.impute import SimpleImputer
 from scipy.interpolate import griddata
@@ -50,7 +50,7 @@ def load_credentials(path = "aws_rds_credentials.json"):
 
      return
 
-def load_data(time_interval, n_samples):
+def load_data(time_interval, n_samples, min_asset_price):
     engine = create_engine(aws_rds_url)
     sql_query = f"""
                 WITH catalogs AS (
@@ -58,20 +58,22 @@ def load_data(time_interval, n_samples):
                     FROM public.tracking_staging
                     WHERE date >= CURRENT_DATE - INTERVAL '{time_interval} days'
                     GROUP BY catalog_id
-                    HAVING COUNT(DISTINCT date) > {time_interval * 0.4}
+                    HAVING COUNT(DISTINCT date) > {time_interval * 0.4}          
                 )
-                SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY price_numeric) as price, catalog_id, date
+                SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_numeric) as price, catalog_id, date -- need to replace for median
                 FROM public.tracking_staging 
                 WHERE date >= CURRENT_DATE - INTERVAL '{time_interval} days'
                         AND catalog_id IN (SELECT catalog_id FROM catalogs)
                 GROUP BY date, catalog_id
-                HAVING COUNT(catalog_id) > {n_samples};
+                HAVING AVG(price_numeric) > {min_asset_price} AND COUNT(product_id) > {n_samples} ;
                 """
     data = pd.read_sql(sql_query, engine)
     return data
 
 def preprocess_data(data):
-    data = data.pivot_table(index = "date", columns="catalog_id", values = "price")
+    data = data.pivot_table(index = "date", 
+                            columns="catalog_id", 
+                            values = "price")
 
     imputer = SimpleImputer(strategy='median')
 
@@ -82,7 +84,7 @@ def preprocess_data(data):
 
 # generator function, creates an iterator over the number of portfolios we want to generate
 # its a better practice, specially if num_port -> inf
-def generate_random_portfolios(data, num_port):
+def generate_random_portfolios(data, num_port, var_quantile):
     num_assets = len(data.columns)
     var_matrix = data.cov()
 
@@ -94,21 +96,25 @@ def generate_random_portfolios(data, num_port):
         # portfolio variance is the double sum of covariance between assets as in the formula
         var = var_matrix.mul(weights, axis=0).mul(weights, axis=1).sum().sum()
         std = np.sqrt(var)
+        var_proxy = np.dot(weights, (data.median()-data.quantile(var_quantile)))
 
-        yield weights, returns, std
+        yield weights, returns, std, var_proxy
 
-def compute_portfolio_stats(data, iterations):
+def compute_portfolio_stats(data, iterations, var_percentile):
     port_weights = []
     port_returns = []
     port_volatility = []
+    port_var = []
     with st.spinner('Generating random portfolios...'):
-        for weights, returns, volatility in generate_random_portfolios(data, iterations):
+        for weights, returns, volatility, var_proxy in generate_random_portfolios(data, iterations, var_percentile):
             port_weights.append(weights)
             port_returns.append(returns)
             port_volatility.append(volatility)
+            port_var.append(var_proxy)
 
         new_data = {"Revenue": port_returns, 
-                    "Volatility": port_volatility}
+                    "Volatility": port_volatility,
+                    "VaR": port_var}
 
         for counter, symbol in enumerate(data.columns.tolist()):
             new_data[str(symbol)+'_weight'] = [w[counter] for w in port_weights]
@@ -121,9 +127,9 @@ def plot_portfolio(portfolio, **kwargs):
     
     # Create heatmap using Plotly
     fig = go.Figure(data=go.Heatmap(
-        z=portfolio.drop(columns=["Revenue", "Volatility"], axis = 1).head(50).values,
-        x=portfolio.drop(columns=["Revenue", "Volatility"], axis = 1).head(50).columns,
-        y=portfolio.drop(columns=["Revenue", "Volatility"], axis = 1).head(50).index,
+        z=portfolio.drop(columns=["Revenue", "Volatility", "VaR"], axis = 1).head(50).values,
+        x=portfolio.drop(columns=["Revenue", "Volatility", "VaR"], axis = 1).head(50).columns,
+        y=portfolio.drop(columns=["Revenue", "Volatility", "VaR"], axis = 1).head(50).index,
         colorscale='YlGnBu',
         colorbar=dict(title='Number of products')
     ))
@@ -155,37 +161,38 @@ def plot_portfolio_scatter(portfolio, **kwargs):
     )
     st.plotly_chart(fig, **kwargs)
     return
+    
 
-def plot_portfolio_hist(portfolio, **kwargs):
+def plot_portfolio_hist(portfolio, x = "Sharpe", **kwargs):
     fig = px.histogram(
         portfolio,
-        x='Sharpe',
-        title='Sharpe',  # Set title of the plot
-        labels={'Sharpe': 'Sharpe', 'count': 'Frequency'},  # Set labels for axes
+        x=x,
+        title=x,  # Set title of the plot
+        labels={x: x, 'count': 'Frequency'},  # Set labels for axes
         opacity=0.7,  # Optional: set opacity of bars
         color_discrete_sequence=['skyblue']  # Optional: set color of bars
     )
 
     fig.update_layout(
-        xaxis_title='Sharpe',  # Set label for x-axis
+        xaxis_title=x,  # Set label for x-axis
         yaxis_title='Frequency'  # Set label for y-axis
     )
     st.plotly_chart(fig, **kwargs)
 
-def plot_portfolio_3d(portfolio, **kwargs):
+def plot_portfolio_3d(portfolio, z = "Revenue", **kwargs):
     scatter3d_trace = go.Scatter3d(
-        x=portfolio["Revenue"],
+        x=portfolio[z],
         y=portfolio["Volatility"],
         z=portfolio["Sharpe"],
         mode='markers',
         marker=dict(
             size=3,                    
-            color=portfolio["Sharpe"],                   
+            color=portfolio[z],                   
             colorscale='Viridis',      
             opacity=0.8,
             line=dict(width=0.5, color='black')
         ),
-        text=[f'Return: {r}<br>Volatility: {v}<br>Sharpe: {s}' for r, v, s in zip(portfolio["Revenue"], portfolio["Volatility"], portfolio["Sharpe"])]
+        text=[f'Return: {r}<br>Volatility: {v}<br>Sharpe: {s}' for r, v, s in zip(portfolio["Revenue"], portfolio["Volatility"], portfolio[z])]
     )
 
     layout = go.Layout(
@@ -193,7 +200,7 @@ def plot_portfolio_3d(portfolio, **kwargs):
         scene=dict(
             xaxis=dict(title='Volatility'),
             yaxis=dict(title='Revenue'),
-            zaxis=dict(title='Sharpe')
+            zaxis=dict(title=z)
         )
     )
 
@@ -224,13 +231,65 @@ def plot_portfolio_3d(portfolio, **kwargs):
     st.plotly_chart(fig, **kwargs)
     return
 
-def surface_3d(df, **kwargs):
+def plot_var_3d(portfolio, **kwargs):
+    scatter3d_trace = go.Scatter3d(
+        x=portfolio["Revenue"],
+        y=portfolio["Sharpe"],
+        z=portfolio["VaR"],
+        mode='markers',
+        marker=dict(
+            size=3,                    
+            color=portfolio["VaR"],                   
+            colorscale='Viridis',      
+            opacity=0.8,
+            line=dict(width=0.5, color='black')
+        ),
+        text=[f'Revenue: {r}<br>Sharpe: {v}<br>VaR: {s}' for r, v, s in zip(portfolio["Revenue"], portfolio["Sharpe"], portfolio["VaR"])]
+    )
+
+    layout = go.Layout(
+        title='Sharpe curve',
+        scene=dict(
+            xaxis=dict(title='Revenue'),
+            yaxis=dict(title='Sharpe'),
+            zaxis=dict(title='VaR')
+        )
+    )
+
+    fig = go.Figure(data=[scatter3d_trace], layout=layout)
+
+    fig.update_layout(autosize=True,
+                        hovermode='closest',
+                        scene = {"aspectratio": {"x": 1, "y": 2.2, "z": 1},
+                                'camera': {'eye':{'x': 2, 'y':0.4, 'z': 0.8}},
+                                'xaxis_title':'Revenue (€)',
+                              'yaxis_title':'Sharpe',
+                              'zaxis_title':'VaR'
+                                },
+                        margin=dict(t=40),
+                        annotations=[
+                            dict(
+                                text="Data Source: Vinted",
+                                x=0,
+                                y=-0.15,
+                                xref="paper",
+                                yref="paper",
+                                showarrow=False
+                            )
+                        ]
+
+                    )
+
+    st.plotly_chart(fig, **kwargs)
+    return
+
+def surface_3d(df, z = "Revenue", **kwargs):
     '''
     3d surface plot - History of Yield Curve on a monthly basis from 1m to 30Y rates
     '''
 
 
-    x = np.array(df["Revenue"])
+    x = np.array(df[z])
     y = np.array(df["Volatility"])
     z = np.array(df["Sharpe"])
 
@@ -282,18 +341,80 @@ def surface_3d(df, **kwargs):
     st.plotly_chart(fig, **kwargs)
     return
 
-def main_controlflow(days, num_port, samples):
+def surface_var_3d(df, **kwargs):
+    '''
+    3d surface plot - History of Yield Curve on a monthly basis from 1m to 30Y rates
+    '''
+
+
+    x = np.array(df["Revenue"])
+    y = np.array(df["Sharpe"])
+    z = np.array(df["VaR"])
+
+
+    xi = np.linspace(x.min(), x.max(), 100)
+    yi = np.linspace(y.min(), y.max(), 100)
+
+    X,Y = np.meshgrid(xi,yi)
+
+    Z = griddata((x,y),
+                 z,
+                 (X,Y), 
+                 method='cubic')
+
+    fig = go.Figure(data=[go.Surface(x=xi,
+                                    y=yi,
+                                    z=Z,
+                                    opacity=0.95,
+                                    connectgaps=True,
+                                    colorscale='rdbu',
+                                    showscale=True,
+                                    reversescale=True,
+                                    )
+                        ]
+                )
+
+    fig.update_layout(autosize=True,
+                        hovermode='closest',
+                        scene = {"aspectratio": {"x": 1, "y": 2.2, "z": 1},
+                                'camera': {'eye':{'x': 2, 'y':0.4, 'z': 0.8}},
+                                'xaxis_title':'Revenue (€)',
+                              'yaxis_title':'Sharpe',
+                              'zaxis_title':'VaR'
+                                },
+                        margin=dict(t=40),
+                        annotations=[
+                            dict(
+                                text="Data Source: Vinted",
+                                x=0,
+                                y=-0.15,
+                                xref="paper",
+                                yref="paper",
+                                showarrow=False
+                            )
+                        ]
+
+                    )
+
+    st.plotly_chart(fig, **kwargs)
+    return
+
+def main_controlflow(days, num_port, samples, var_percentile, min_asset_price):
     # load melted dataframe
-    data = load_data(days, samples)
+    data = load_data(days, samples, min_asset_price)
     unique = data["catalog_id"].nunique()
     st.write(f"Unique product catalogs: {unique}") 
+    #data2 = data.pivot_table(index = "date", 
+    #                        columns="catalog_id", 
+    #                        values = "price")
+    #st.write(data2.describe())
     # explode into tabular and fill missing values
     data = preprocess_data(data)
 
     # reduce memory usage
     data = reduce_mem_usage(data, False)
 
-    portfolio = compute_portfolio_stats(data, num_port)
+    portfolio = compute_portfolio_stats(data, num_port, var_percentile)
 
     tab1, tab2, tab3 = st.tabs(["Portfolio", "Data (line chart)", "Date (dataframe)"])
     with tab1:
@@ -310,24 +431,35 @@ def main_controlflow(days, num_port, samples):
         st.write(data.describe())
 
     portfolio["Sharpe"] = portfolio["Revenue"]/portfolio["Volatility"] 
+    #portfolio["VaR"] = portfolio["Revenue"]/portfolio["Volatility"] 
 
     # surface_3d(portfolio)
 
-    tab1, tab2 = st.tabs(["3D Scatterplot", "Mean-variance"])
+    tab1, tab2, tab3 = st.tabs(["Sharpe", "VaR", "Mean-variance"])
     with tab1:
         cols = st.columns([0.5, 0.5])
         with cols[0]:
-            plot_portfolio_3d(portfolio, use_container_width = True)
+            plot_portfolio_3d(portfolio, 
+                              use_container_width = True)
         with cols[1]:
-            surface_3d(portfolio, use_container_width = True)
-
+            surface_3d(portfolio, 
+                       use_container_width = True)
     with tab2:
+        cols = st.columns([0.5, 0.5])
+        with cols[0]:
+            plot_var_3d(portfolio, 
+                              use_container_width = True)
+        with cols[1]:
+            surface_var_3d(portfolio, 
+                       use_container_width = True)
+
+    with tab3:
         plot_portfolio_scatter(portfolio, use_container_width = True)
 
-    st.write("<h5 style='font-family: Bungee;; color: orange'>Analysis</h5>", 
+    st.write("<h5 style='font-family: Bungee; color: orange'>Analysis</h5>", 
             unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["Portfolio", "Top Portfolios"])
+    tab1, tab2, tab3 = st.tabs(["Sharpe", "VaR", "Portfolios"])
     with tab1:
         with st.expander("Linear Regression Modelling"):
             st.write("""
@@ -337,7 +469,8 @@ def main_controlflow(days, num_port, samples):
                 **These coefficients do not imply causation**.
 
             """)
-        reg = LinearRegression().fit(portfolio.drop(["Sharpe", "Revenue", "Volatility"], axis = 1), portfolio["Sharpe"])
+        reg = LinearRegression().fit(portfolio.drop(["Sharpe", "Revenue", "Volatility", "VaR"], axis = 1), 
+                                     portfolio["Sharpe"])
         coefficients = reg.coef_
         top_5_indices = coefficients.argsort()[-5:][::-1]
 
@@ -350,8 +483,10 @@ def main_controlflow(days, num_port, samples):
                     title="Top 5 Catalogs by Sharpe",
                     labels={"Coefficient": "Coefficient Value", 
                             "Label": "Catalog"},
-                    orientation='h',
-                    color_continuous_scale=["green"])
+                    orientation='h')
+        
+        fig.update_traces(marker_color = 'green', marker_line_color = 'white',
+                        marker_line_width = 1, opacity = 1)
 
         cols = st.columns([0.2, 0.2, 0.4])
 
@@ -368,19 +503,86 @@ def main_controlflow(days, num_port, samples):
                     y="Label", 
                     x="Coefficient", 
                     title="Bottom 5 Catalogs by Sharpe",
-                    labels={"Coefficient": "Coefficient Value", "Label": "Catalog"},
-                    orientation='h',
-                    color_continuous_scale=["red"])
+                    labels={"Coefficient": "Coefficient Value", 
+                            "Label": "Catalog"},
+                    orientation='h')
+        
+        fig.update_traces(marker_color = 'red', 
+                          marker_line_color = 'white',
+                        marker_line_width = 1, 
+                        opacity = 1)
 
         with cols[1]:
             st.plotly_chart(fig, use_container_width= True)
 
         with cols[2]:
-            plot_portfolio_hist(portfolio, use_container_width = True)
-
+            plot_portfolio_hist(portfolio, use_container_width = True, x = "Sharpe")
+    
     with tab2:
+        with st.expander("Linear Regression Modelling"):
+            st.write("""
+                In order to find how labels (catalogs) correlate to Sharpe ratio, we implemented Linear Regression Modelling. 
+                The purpose is to extract the relative importance of each label through sign and magnitude.
+                    
+                **These coefficients do not imply causation**.
+
+            """)
+        reg = LinearRegression().fit(portfolio.drop(["Sharpe", "Revenue", "Volatility", "VaR"], axis = 1), portfolio["VaR"])
+        coefficients = reg.coef_
+        top_5_indices = coefficients.argsort()[-5:][::-1]
+
+        top_5_labels = portfolio.columns[top_5_indices]
+        df = pd.DataFrame({"Coefficient": np.abs(coefficients[top_5_indices]), 
+                        "Label": top_5_labels})
+        fig = px.bar(df, 
+                    y="Label", 
+                    x="Coefficient", 
+                    title="Worst Catalogs by VaR",
+                    labels={"Coefficient": "Coefficient Value", 
+                            "Label": "Catalog"},
+                    orientation='h')
+        
+        fig.update_traces(marker_color = 'red', marker_line_color = 'white',
+                        marker_line_width = 1, opacity = 1)
+
+        cols = st.columns([0.2, 0.2, 0.4])
+
+        with cols[0]:
+            st.plotly_chart(fig, use_container_width= True)
+
+        top_5_indices = coefficients.argsort()[:5][::-1]
+
+        top_5_labels = portfolio.columns[top_5_indices]
+        df = pd.DataFrame({"Coefficient": coefficients[top_5_indices], 
+                        "Label": top_5_labels})
+
+        fig = px.bar(df, 
+                    y="Label", 
+                    x="Coefficient", 
+                    title="Best Catalogs by VaR",
+                    labels={"Coefficient": "Coefficient Value", 
+                            "Label": "Catalog"},
+                    orientation='h')
+        
+        fig.update_traces(marker_color = 'green', 
+                          marker_line_color = 'white',
+                        marker_line_width = 1, 
+                        opacity = 1)
+
+        with cols[1]:
+            st.plotly_chart(fig, 
+                            use_container_width= True)
+
+        with cols[2]:
+            plot_portfolio_hist(portfolio, 
+                                use_container_width = True, 
+                                x = "VaR")
+
+    with tab3:
         top_5_port = portfolio.sort_values("Sharpe", ascending=False).reset_index(drop= True).head(5)
-        top_5_port = pd.concat([top_5_port["Sharpe"], top_5_port.drop("Sharpe", axis=1)], axis=1)
+        top_5_port = pd.concat([top_5_port["Sharpe"], 
+                                top_5_port.drop("Sharpe", axis=1)], 
+                                axis=1)
         top_5_port.index = [f"Top {n}" for n in range(1, len(top_5_port.index) + 1)]
         st.write(top_5_port)
 
@@ -411,51 +613,54 @@ def main_controlflow(days, num_port, samples):
         __revenue = top_5_port["Revenue"].iloc[0]
         __sharpe = top_5_port["Sharpe"].iloc[0]
         __volatility = top_5_port["Volatility"].iloc[0]
-        __num_assets = top_5_port.drop(["Revenue", "Volatility", "Sharpe"], axis = 1).iloc[0].sum()
+        __num_assets = top_5_port.drop(["Revenue", "Volatility", "Sharpe", "VaR"], axis = 1).iloc[0].sum()
         __rev_per_asset = __revenue/__num_assets
-        st.write(f"""<div style="font-family: Nunito, sans-serif; color: #333333;">
-                    <h6>Mean-Variance Optimized Portfolio:</h6>
-                    <p><b>Revenue:{__revenue:.2f}€</b></p>
-                    <p><b>Revenue per asset:{__rev_per_asset:.2f}€</b></p>
-                    <p><b>Standard Dev.:{__volatility:.2f}€</b></p>
-                    <p><b>Sharpe:{__sharpe:.2f}</b></p>
-                    <p>Nº items:{__num_assets:.0f}</p>
-                    </div>""", 
-                    unsafe_allow_html=True)
+        with st.container:
+            st.write(f"""<div style="font-family: Nunito, sans-serif; color: #333333;">
+                        <h6>Mean-Variance Optimized Portfolio:</h6>
+                        <p><b>Revenue:{__revenue:.2f}€</b></p>
+                        <p><b>Revenue per asset:{__rev_per_asset:.2f}€</b></p>
+                        <p><b>Standard Dev.:{__volatility:.2f}€</b></p>
+                        <p><b>Sharpe:{__sharpe:.2f}</b></p>
+                        <p>Nº items:{__num_assets:.0f}</p>
+                        </div>""", 
+                        unsafe_allow_html=True)
     
     with cols[2]:
         top_5_port = portfolio.sort_values("Revenue", ascending=False).reset_index(drop= True).head(1)
         __revenue = top_5_port["Revenue"].iloc[0]
         __sharpe = top_5_port["Sharpe"].iloc[0]
         __volatility = top_5_port["Volatility"].iloc[0]
-        __num_assets = top_5_port.drop(["Revenue", "Volatility", "Sharpe"], axis = 1).iloc[0].sum()
+        __num_assets = top_5_port.drop(["Revenue", "Volatility", "Sharpe", "VaR"], axis = 1).iloc[0].sum()
         __rev_per_asset = __revenue/__num_assets
-        st.write(f"""<div style="font-family: Nunito, sans-serif; color: #333333;">
-                    <h6>Revenue Optimized Portfolio:</h6>
-                    <p><b>Revenue:{__revenue:.2f}€</b></p>
-                    <p><b>Revenue per asset:{__rev_per_asset:.2f}€</b></p>
-                    <p><b>Standard Dev.:{__volatility:.2f}€</b></p>
-                    <p><b>Sharpe:{__sharpe:.2f}</b></p>
-                    <p>Nº items:{__num_assets:.0f}</p>
-                    </div>""", 
-                    unsafe_allow_html=True)
+        with st.container:
+            st.write(f"""<div style="font-family: Nunito, sans-serif; color: #333333;">
+                        <h6>Revenue Optimized Portfolio:</h6>
+                        <p><b>Revenue:{__revenue:.2f}€</b></p>
+                        <p><b>Revenue per asset:{__rev_per_asset:.2f}€</b></p>
+                        <p><b>Standard Dev.:{__volatility:.2f}€</b></p>
+                        <p><b>Sharpe:{__sharpe:.2f}</b></p>
+                        <p>Nº items:{__num_assets:.0f}</p>
+                        </div>""", 
+                        unsafe_allow_html=True)
 
     with cols[3]:
         top_5_port = portfolio.sort_values("Volatility", ascending=True).reset_index(drop= True).head(1)
         __revenue = top_5_port["Revenue"].iloc[0]
         __sharpe = top_5_port["Sharpe"].iloc[0]
         __volatility = top_5_port["Volatility"].iloc[0]
-        __num_assets = top_5_port.drop(["Revenue", "Volatility", "Sharpe"], axis = 1).iloc[0].sum()
+        __num_assets = top_5_port.drop(["Revenue", "Volatility", "Sharpe", "VaR"], axis = 1).iloc[0].sum()
         __rev_per_asset = __revenue/__num_assets
-        st.write(f"""<div style="font-family: Nunito, sans-serif; color: #333333;">
-                    <h6>Volatility Optimized Portfolio:</h6>
-                    <p><b>Revenue:{__revenue:.2f}€</b></p>
-                    <p><b>Revenue per asset:{__rev_per_asset:.2f}€</b></p>
-                    <p><b>Standard Dev.:{__volatility:.2f}€</b></p>
-                    <p><b>Sharpe:{__sharpe:.2f}</b></p>
-                    <p>Nº items:{__num_assets:.0f}</p>
-                    </div>""", 
-                    unsafe_allow_html=True)
+        with st.container:
+            st.write(f"""<div style="font-family: Nunito, sans-serif; color: #333333;">
+                        <h6>Volatility Optimized Portfolio:</h6>
+                        <p><b>Revenue:{__revenue:.2f}€</b></p>
+                        <p><b>Revenue per asset:{__rev_per_asset:.2f}€</b></p>
+                        <p><b>Standard Dev.:{__volatility:.2f}€</b></p>
+                        <p><b>Sharpe:{__sharpe:.2f}</b></p>
+                        <p>Nº items:{__num_assets:.0f}</p>
+                        </div>""", 
+                        unsafe_allow_html=True)
 
     #st.write("Use other risk measures other than volatility (IQR, Range, etc)")
     #st.pyplot(sns.clustermap(_data.corr()))
@@ -523,15 +728,31 @@ def main():
             - $\sigma^2$ is the target risk level.
         """)
 
-    cols = st.columns([0.2, 0.4, 0.4])
+    cols = st.columns([0.1, 0.2, 0.2, 0.1, 0.2])
     with cols[0]:
-        selected_interval = st.selectbox("Select a time interval:", ["7 days", "30 days", "90 days"])
+        selected_interval = st.selectbox("Time interval:", 
+                                         ["7 days", "30 days", "90 days"],
+                                         help = "This is the time horizon for which data will be considered.")
 
     with cols[1]:
-        num_port = st.selectbox("Select number of portfolio iterations:", [1000, 2000, 3000])
+        num_port = st.selectbox("Number of portfolio iterations:", 
+                                [1000, 2000, 3000],
+                                help = "This will be the number of portfolios that are going to be simulated.")
 
     with cols[2]:
-        samples = st.selectbox("Minimum products per sample (day and catalog):", [30, 45, 60])
+        samples = st.selectbox("Minimum sample size:", 
+                               [30, 45, 60],
+                               help = "Minimum number of products for each catalog and day to consider the catalog. This means a value of 30 will select only the catalogs that have 30 or more products worth of data for every day during the period.")
+
+    with cols[3]:
+        var_percentile = st.selectbox("VaR proxy:", 
+                                      [0.25, 0.05],
+                                      help = "The percentile of the revenues used as a proxy for Value at Risk.")
+
+    with cols[4]:
+        min_asset_price = st.selectbox("Minimum expected catalog price:", 
+                                       [0, 5, 10, 15, 20],
+                                       help= "Minimum expected price of a catalog for it to be considered. For value 10, only catalogs with an expected price > 10 will be considered.")
 
     # Convert selected interval to days
     if selected_interval == "7 days":
@@ -541,6 +762,6 @@ def main():
     elif selected_interval == "90 days":
         days = 90
 
-    main_controlflow(days, num_port, samples)
+    main_controlflow(days, num_port, samples, var_percentile, min_asset_price)
 
 main()
